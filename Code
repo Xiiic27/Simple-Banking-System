@@ -1,0 +1,226 @@
+import random
+import sqlite3
+
+# SQL queries
+CREATE_CARD_TABLE = 'CREATE TABLE IF NOT EXISTS card (id INTEGER, number TEXT, pin TEXT, balance INTEGER DEFAULT 0);'
+ADD_CARD = 'INSERT INTO card (number, pin) VALUES (?, ?);'
+CHECK_CARD = 'SELECT pin FROM card WHERE number = ?;'
+GET_BALANCE = 'SELECT balance FROM card WHERE number = ?;'
+UPDATE_BALANCE = 'UPDATE card SET balance = ? WHERE number = ?;'
+DELETE_ACCOUNT = 'DELETE FROM card WHERE number = ?;'
+
+
+# connect to sqlite database called 'card'
+def connect_sqlite3():
+    conn = sqlite3.connect('card.s3db')
+    conn.commit()
+    return conn
+
+
+# create a table named 'card'
+def create_table(conn):
+    cur = conn.cursor()
+    with conn:
+        cur.execute(CREATE_CARD_TABLE)
+        conn.commit()
+
+
+#  add a card/an account to the table
+def add_card(conn, number, pin):
+    cur = conn.cursor()
+    with conn:
+        # pass the last two parameters to the execute query
+        # to replace the question marks
+        cur.execute(ADD_CARD, (number, pin))
+        conn.commit()
+
+
+# get the balance of a certain card
+def get_balance(conn, number):
+    cur = conn.cursor()
+    with conn:
+        # return the corresponding balance
+        balance = cur.execute(GET_BALANCE, (number,)).fetchall()
+        conn.commit()
+        return balance
+
+
+# check whether the input is identical to the pin stored in the database
+def check_card_pin(conn, number):
+    cur = conn.cursor()
+    with conn:
+        db_pin = cur.execute(CHECK_CARD, (number,)).fetchall()
+        conn.commit()
+        return db_pin
+
+
+# add money to a certain account and update the balance stored in database
+def add_income(conn, number, amount):
+    cur = conn.cursor()
+    with conn:
+        new_balance = int(get_balance(conn, number)[0][0]) + int(amount)
+        cur.execute(UPDATE_BALANCE, (new_balance, number))
+        conn.commit()
+
+
+# reduce and update the balance of a certain account due to transfer
+def reduce_money(conn, number, amount):
+    cur = conn.cursor()
+    with conn:
+        new_balance = int(get_balance(conn, number)[0][0]) - int(amount)
+        cur.execute(UPDATE_BALANCE, (new_balance, number))
+        conn.commit()
+
+
+# delete a certain account from the database
+def delete_account(conn, number):
+    cur = conn.cursor()
+    with conn:
+        cur.execute(DELETE_ACCOUNT, (number, ))
+        conn.commit()
+
+
+# transfer money from an logged-in account to another
+def do_transfer(num, trans_to_num):
+    # connect to the sqlite database called 'card'
+    connection = connect_sqlite3()
+
+    # stored the receiver's card number into two parts:
+    # the first 15 digits -> a temp list; the last digit as a string
+    temp_list = [char for char in trans_to_num[: -1]]
+    last_digit = trans_to_num[-1]
+    # check whether the length of input card number equals to 16
+    # and whether the card belongs to the bank (start with '400000')
+    if len(trans_to_num) != 16 or not trans_to_num.startswith('400000'):
+        print('Such a card does not exist.\n')
+    else:
+        # check whether the receiver's card number follows Luhn algorithm
+        if last_digit != str(get_checksum(temp_list)):
+            print('Probably you made a mistake in the card number. Please try again\n')
+        # check whether the receiver's card is stored in database
+        elif not check_card_pin(connection, trans_to_num):
+            print('Such a card does not exit.\n')
+        # check whether the sender's card is identical to receiver's card
+        elif num == trans_to_num:
+            print("You can't transfer money to the same account!\n")
+        # when there is no error
+        else:
+            transfer_amount = int(input('Enter how much money you want to transfer:\n'))
+            # check whether account has enough money to transfer
+            if transfer_amount > get_balance(connection, num)[0][0]:
+                print('Not enough money!\n')
+            else:
+                reduce_money(connection, num, transfer_amount)
+                add_income(connection, trans_to_num, transfer_amount)
+                print('Success!\n')
+
+
+# create a new account including assigning a new card number and the initial PIN
+# and connect to the database 'card'
+def create_account():
+    connection = connect_sqlite3()
+    # The card number consists of three parts: the first 6 digits -> identification number; the next 9 digits -> customer_number; the last digit
+    # generate the customer number and PIN randomly
+    customer_number = ''.join(str(random.randint(0, 9)) for _ in range(0, 9))
+    identification_number = '400000'
+    temp = identification_number + customer_number
+    temp_list = [char for char in temp]
+    account = temp + str(get_checksum(temp_list))
+    password = str(random.randint(0, 9)) + str(random.randint(0, 9)) + str(random.randint(0, 9)) + str(random.randint(0, 9))
+    print('\nYour card has been created\nYour card number:')
+    print(account)
+    print('Your card PIN:')
+    print(password + '\n')
+    add_card(connection, account, password)
+
+
+# determine the last digit of card number following Luhn Algorithm
+def get_checksum(lst):
+    summation = 0
+    mod_lst = []
+    for ind, elem in enumerate(lst):
+        if ind % 2 == 0:
+            mod_lst.append(str(int(elem) * 2))
+        else:
+            mod_lst.append(str(elem))
+    for elem in mod_lst:
+        if int(elem) > 9:
+            summation += int(elem) - 9
+        else:
+            summation += int(elem)
+    if summation % 10 == 0:
+        checksum = 0
+    else:
+        checksum = 10 - summation % 10
+    return checksum
+
+
+# login the account to the database and connect to the database 'card'
+def login_account():
+    connection = connect_sqlite3()
+
+    input_card = input('\nEnter your card number:\n')
+    input_pin = input('Enter your PIN:\n')
+    # check whether the input card number is stored in the database
+    if check_card_pin(connection, input_card):
+        # if successfully logged in, then present the menu 2
+        if check_card_pin(connection, input_card)[0][0] == input_pin:
+            print('You have successfully logged in!\n')
+            inner_loop(input_card)
+        # if failed, then present the menu 1
+        else:
+            print('Wrong card number or PIN!\n')
+            main_loop()
+    # if card does not exist, present the menu 1
+    else:
+        print('Wrong card number or PIN!\n')
+        main_loop()
+
+
+# Loop to present the menu 2 if successfully logged in
+def inner_loop(num):
+    connection = connect_sqlite3()
+
+    while True:
+        print('''1. Balance\n2. Add income\n3. Do transfer\n4. Close account\n5. Log out\n0. Exit''')
+        command = input()
+        if command == '1':
+            print(f'Balance: {get_balance(connection, num)[0][0]}\n')
+        elif command == '2':
+            amount = input('Enter income:\n')
+            add_income(connection, num, amount)
+            print('Income was added!\n')
+        elif command == '3':
+            transfer_number = input('\nTransfer\nEnter card number:\n')
+            do_transfer(num, transfer_number)
+        elif command == '4':
+            delete_account(connection, num)
+            print('\nThe account has been closed!\n')
+        elif command == '5':
+            print('You have successfully logged out!\n')
+            break
+        elif command == '0':
+            print('\nBye!')
+            exit()
+        else:
+            print('Invalid input, please try again!\n')
+
+
+# create the table 'card' and loop to present menu 1
+def main_loop():
+    create_table(connect_sqlite3())
+    while True:
+        print('''1. Create an account\n2. Log into account\n0. Exit''')
+        command = input()
+        if command == '1':
+            create_account()
+        elif command == '2':
+            login_account()
+        elif command == '0':
+            print('\nBye!')
+            exit()
+        else:
+            print('Invalid input, please try again!\n')
+
+
+main_loop()
